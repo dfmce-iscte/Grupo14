@@ -1,0 +1,77 @@
+module Projeto where
+
+import Daml.Script
+import DA.List 
+
+
+type EnergyID = ContractId Energy
+
+template Energy
+    with 
+        issuer : Party
+        owner : Party
+        max_energy : Decimal
+        cp_free : [CP]
+    where
+        ensure max_energy > 0.0
+        signatory issuer, owner
+
+        choice GiveEnergy : EnergyID
+            with
+                ev_user : Party
+            controller owner
+                do 
+                    let first_cp_free = if not (null cp_free) then head cp_free else error "No Charging Points available"
+                    create first_cp_free with ev_user = ev_user, energy_to_charge = 50.0, hour = "", price = 15.5
+                    create this with cp_free = cp_free
+
+
+
+type CPID = ContractId CP
+
+
+template CP 
+    with
+        issuer : Party
+        owner : Energy
+        ev_user : Party
+        id : Text
+        energy_to_charge : Decimal
+        hour : Text
+        price : Decimal
+    where
+        signatory owner.owner, ev_user
+
+
+        choice EndCharging : EnergyID
+            controller owner.owner
+                do
+                    let newList = this :: owner.cp_free
+                    create owner with cp_free = newList
+                  
+        -- choice StartCharging : CPID
+        --     with
+        --         start_time : Text
+        --         total_time : Decimal
+        --     controller ev_user
+        --         do
+        --             create this with hour = start_time, price = energy_to_charge*total_time*0.5
+                    
+
+
+
+template EnergyTransferProporsal
+    with
+        issuer : Party --EV user
+        owner : Energy --CS operator
+    where
+        signatory issuer
+
+        choice Cancelar : EnergyID
+            controller issuer
+                do create owner
+
+        choice Accept : CPID
+            controller owner.owner
+                do 
+                    exercise owner GiveEnergy with ev_user = issuer
