@@ -1,10 +1,11 @@
 module Projeto where
 
-import Daml.Script
 import DA.List 
-
+import Daml.Script
 
 type EnergyID = ContractId Energy
+type CPID = ContractId CP
+type BillID = ContractId Bill
 
 template Energy
     with 
@@ -22,56 +23,118 @@ template Energy
             controller owner
                 do 
                     let first_cp_free = if not (null cp_free) then head cp_free else error "No Charging Points available"
-                    create first_cp_free with ev_user = ev_user, energy_to_charge = 50.0, hour = "", price = 15.5
+                    create Bill with issuer = this, owner = owner, energy_spend = 50.0, price = 40.0, hour = "", ev_user = ev_user, cp_id = first_cp_free
                     create this with cp_free = cp_free
 
 
+template Bill
+    with 
+        issuer : Energy
+        owner : Party
+        energy_spend : Decimal
+        price : Decimal
+        hour : Text
+        ev_user : Party
+        cp_id : CP
+    where
+        signatory owner, ev_user
 
-type CPID = ContractId CP
+
+        choice CPFreeAgain : EnergyID
+            controller owner
+                do 
+                    create issuer with cp_free = cp_id :: issuer.cp_free
+
 
 
 template CP 
     with
         issuer : Party
         owner : Energy
-        ev_user : Party
         id : Text
-        energy_to_charge : Decimal
-        hour : Text
-        price : Decimal
     where
-        signatory owner.owner, ev_user
+        signatory owner.owner
+        observer owner with cp_free = this :: owner.cp_free 
+        
 
 
-        choice EndCharging : EnergyID
-            controller owner.owner
-                do
-                    let newList = this :: owner.cp_free
-                    create owner with cp_free = newList
+updateEnergy : EnergyID -> Update Energy
+updateEnergy energy = do
+    energyFetched <- fetch energy
+    submit energyFetched 
+
+setup : Script EnergyID
+setup = script do
+    charging_station <- allocatePartyWithHint "CS" (PartyIdHint "CS")
+    csID <- validateUserId "cs"
+    createUser (User csID (Some charging_station)) [CanActAs charging_station]
+    ev_user1 <-  allocatePartyWithHint "EV_user1" (PartyIdHint "EV_user1")
+    ev_user1ID <- validateUserId "ev_user1"
+    createUser (User ev_user1ID (Some ev_user1)) [CanActAs ev_user1]
+
+
+    energy <- submit charging_station do 
+        createCmd Energy with
+            issuer = charging_station
+            owner = charging_station
+            max_energy = 30.0
+            cp_free = []
+
+    energyFetched <- submit updateEnergy energy
+
+    cp1 <- submit charging_station 
+        do 
+            createCmd CP with
+                issuer = charging_station
+                owner = energyFetched
+                id = "CP1"
+    cp2 <- submit charging_station 
+        do 
+            createCmd CP with
+                issuer = charging_station
+                owner = energyFetched
+                id = "CP2"
+    cp3 <- submit charging_station 
+        do 
+            createCmd CP with
+                issuer = charging_station
+                owner = energyFetched
+                id = "CP3"
+
+    submit charging_station do
+        exerciseCmd energy GiveEnergy with ev_user = ev_user1
+
+
+
+--         choice EndCharging : EnergyID
+--             controller owner.owner
+--                 do
+--                     let newList = this :: owner.cp_free
+--                     create owner with cp_free = newList
                   
-        -- choice StartCharging : CPID
-        --     with
-        --         start_time : Text
-        --         total_time : Decimal
-        --     controller ev_user
-        --         do
-        --             create this with hour = start_time, price = energy_to_charge*total_time*0.5
+--         -- choice StartCharging : CPID
+--         --     with
+--         --         start_time : Text
+--         --         total_time : Decimal
+--         --     controller ev_user
+--         --         do
+--         --             create this with hour = start_time, price = energy_to_charge*total_time*0.5
                     
 
 
 
-template EnergyTransferProporsal
-    with
-        issuer : Party --EV user
-        owner : Energy --CS operator
-    where
-        signatory issuer
+-- template EnergyTransferProporsal
+--     with
+--         issuer : Party --EV user
+--         owner : Energy --CS operator
+--     where
+--         signatory issuer
 
-        choice Cancelar : EnergyID
-            controller issuer
-                do create owner
+--         choice Cancelar : EnergyID
+--             controller issuer
+--                 do create owner
 
-        choice Accept : CPID
-            controller owner.owner
-                do 
-                    exercise owner GiveEnergy with ev_user = issuer
+--         choice Accept : CPID
+--             controller owner.owner
+--                 do 
+--                     exercise owner GiveEnergy with ev_user = issuer
