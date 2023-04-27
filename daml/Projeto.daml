@@ -3,138 +3,212 @@ module Projeto where
 import DA.List 
 import Daml.Script
 
-type EnergyID = ContractId Energy
-type CPID = ContractId CP
+type ChargingStationID = ContractId ChargingStation
+-- type CPID = ContractId CP
 type BillID = ContractId Bill
 
-template Energy
+
+-- Condominio, condóminos, energyProvider (quem põe as chargingStations)
+
+template Offer
+    with
+        chargingStation : ChargingStation
+    where
+        signatory chargingStation.energy_provider
+        observer chargingStation.condominium
+
+        choice Accept : ChargingStationID 
+            with
+                listOfParties : [Party]
+            controller chargingStation.condominium
+                do
+                    create chargingStation with listOfParties
+              
+        
+template UserEVRequest
     with 
-        issuer : Party
-        owner : Party
+        ev_user : Party
+        chargingStationId : ChargingStationID
+        energy_provider : Party
+    where
+        signatory ev_user
+        observer energy_provider
+
+
+        choice AcceptRequest : DataTypeToReturnInAccpetRequest
+            controller energy_provider
+                do 
+                    result <- exercise chargingStationId GetFreeCP
+                    bill_id <-create Bill with energy_provider = energy_provider, energy_spend = 0.0, price = 0.0, hour = "00:00", ev_user = ev_user, cp_id = result.free_cp
+                    return DataTypeToReturnInAccpetRequest with bill_id = bill_id, cs_id = result.cs_id
+        
+
+
+template ChargingStation
+    with 
+        energy_provider : Party
+        condominium : Party
+        listOfParties : [Party]
         max_energy : Decimal
-        cp_free : [CP]
+        cp_free : [Text]
     where
         ensure max_energy > 0.0
-        signatory issuer, owner
+        signatory energy_provider, condominium
+        observer listOfParties
 
-        choice GiveEnergy : EnergyID
-            with
-                ev_user : Party
-            controller owner
-                do 
-                    let first_cp_free = if not (null cp_free) then head cp_free else error "No Charging Points available"
-                    create Bill with issuer = this, owner = owner, energy_spend = 50.0, price = 40.0, hour = "", ev_user = ev_user, cp_id = first_cp_free
+        choice UpdateListOfParties : ChargingStationID
+            with 
+                newListOfParties : [Party]
+            controller condominium
+                do
+                    create this with listOfParties = newListOfParties
+        
+        choice AddNewParty : ChargingStationID
+            with 
+                newParty : Party
+            controller condominium
+                do
+                    create this with listOfParties = newParty :: listOfParties
+
+        choice RemoveParty : ChargingStationID
+            with 
+                party_to_remove : Party
+            controller condominium
+                do
+                    let newList = filter (/= party_to_remove) listOfParties
+                    create this with listOfParties = newList
+
+        choice UpdateMaxEnergy : ChargingStationID
+            with 
+                new_max_energy : Decimal
+            controller energy_provider, condominium --basta um deles para atualizar ou tem de haver concordância?
+                do
+                    create this with max_energy = new_max_energy
+
+        choice AddNewCP : ChargingStationID
+            with 
+                new_cp : Text
+            controller energy_provider
+                do
+                    create this with cp_free = new_cp :: cp_free
+            
+        choice RemoveCP : ChargingStationID
+            with 
+                cp_to_remove : Text
+            controller energy_provider
+                do
+                    let newList = filter (/= cp_to_remove) cp_free
                     create this with cp_free = cp_free
+
+        choice GetFreeCP : DataTypeToReturnInGetFreeCP
+            controller energy_provider
+                do 
+                    if not (null cp_free) then 
+                        do 
+                            let first_cp_free = head cp_free
+                            cs_id <- create this with cp_free = filter (/= first_cp_free) cp_free
+                            return DataTypeToReturnInGetFreeCP with free_cp = first_cp_free, cs_id = cs_id
+                    else do error "No Charging Points available"
+
+data DataTypeToReturnInGetFreeCP = DataTypeToReturnInGetFreeCP
+    with
+        free_cp : Text
+        cs_id : ChargingStationID
+
+data DataTypeToReturnInAccpetRequest = DataTypeToReturnInAccpetRequest
+    with
+        bill_id : BillID
+        cs_id : ChargingStationID
 
 
 template Bill
     with 
-        issuer : Energy
-        owner : Party
+        energy_provider : Party
         energy_spend : Decimal
         price : Decimal
         hour : Text
         ev_user : Party
-        cp_id : CP
+        cp_id : Text
     where
-        signatory owner, ev_user
-
-
-        choice CPFreeAgain : EnergyID
-            controller owner
-                do 
-                    create issuer with cp_free = cp_id :: issuer.cp_free
-
-
-
-template CP 
-    with
-        issuer : Party
-        owner : Energy
-        id : Text
-    where
-        signatory owner.owner
-        observer owner with cp_free = this :: owner.cp_free 
+        signatory energy_provider, ev_user
         
 
-
-updateEnergy : EnergyID -> Update Energy
-updateEnergy energy = do
-    energyFetched <- fetch energy
-    submit energyFetched 
-
-setup : Script EnergyID
-setup = script do
-    charging_station <- allocatePartyWithHint "CS" (PartyIdHint "CS")
-    csID <- validateUserId "cs"
-    createUser (User csID (Some charging_station)) [CanActAs charging_station]
-    ev_user1 <-  allocatePartyWithHint "EV_user1" (PartyIdHint "EV_user1")
-    ev_user1ID <- validateUserId "ev_user1"
-    createUser (User ev_user1ID (Some ev_user1)) [CanActAs ev_user1]
-
-
-    energy <- submit charging_station do 
-        createCmd Energy with
-            issuer = charging_station
-            owner = charging_station
-            max_energy = 30.0
-            cp_free = []
-
-    energyFetched <- submit updateEnergy energy
-
-    cp1 <- submit charging_station 
-        do 
-            createCmd CP with
-                issuer = charging_station
-                owner = energyFetched
-                id = "CP1"
-    cp2 <- submit charging_station 
-        do 
-            createCmd CP with
-                issuer = charging_station
-                owner = energyFetched
-                id = "CP2"
-    cp3 <- submit charging_station 
-        do 
-            createCmd CP with
-                issuer = charging_station
-                owner = energyFetched
-                id = "CP3"
-
-    submit charging_station do
-        exerciseCmd energy GiveEnergy with ev_user = ev_user1
-
-
-
---         choice EndCharging : EnergyID
---             controller owner.owner
---                 do
---                     let newList = this :: owner.cp_free
---                     create owner with cp_free = newList
-                  
---         -- choice StartCharging : CPID
---         --     with
---         --         start_time : Text
---         --         total_time : Decimal
---         --     controller ev_user
---         --         do
---         --             create this with hour = start_time, price = energy_to_charge*total_time*0.5
+        choice FinishCharging : ChargingStationID
+            with 
+                current_chargingStationId : ChargingStationID
+            controller energy_provider
+                do 
+                    exercise current_chargingStationId AddNewCP with new_cp = cp_id
                     
 
 
 
--- template EnergyTransferProporsal
---     with
---         issuer : Party --EV user
---         owner : Energy --CS operator
---     where
---         signatory issuer
+setup : Script ()
+setup = script do
+    energy_provider <- allocatePartyWithHint "CS" (PartyIdHint "CS")
+    csID <- validateUserId "cs"
+    createUser (User csID (Some energy_provider)) [CanActAs energy_provider]
 
---         choice Cancelar : EnergyID
---             controller issuer
---                 do create owner
+    condominium <- allocatePartyWithHint "Condominium" (PartyIdHint "Condominium")
+    condominiumID <- validateUserId "condominium"
+    createUser (User condominiumID (Some condominium)) [CanActAs condominium]
 
---         choice Accept : CPID
---             controller owner.owner
---                 do 
---                     exercise owner GiveEnergy with ev_user = issuer
+    ev_user1 <-  allocatePartyWithHint "EV_user1" (PartyIdHint "EV_user1")
+    ev_user1ID <- validateUserId "ev_user1"
+    createUser (User ev_user1ID (Some ev_user1)) [CanActAs ev_user1]
+
+    ev_user2 <-  allocatePartyWithHint "EV_user2" (PartyIdHint "EV_user2")
+    ev_user2ID <- validateUserId "ev_user2"
+    createUser (User ev_user2ID (Some ev_user2)) [CanActAs ev_user2]
+
+
+    let 
+        chargingStation = ChargingStation 
+            with 
+                energy_provider = energy_provider
+                condominium = condominium
+                listOfParties = []
+                max_energy = 100.0
+                cp_free = ["A1", "A2", "A3"]
+
+    offerCid <- submit energy_provider do 
+        createCmd Offer with chargingStation
+
+    csCid <- submit condominium do
+        exerciseCmd offerCid Accept
+            with 
+                listOfParties = [ev_user1]
+
+
+    csCid <- submit condominium do
+        exerciseCmd csCid AddNewParty with newParty = ev_user2
+
+    csCid <- submit condominium do
+        exerciseCmd csCid RemoveParty with party_to_remove = ev_user1
+
+    csCid <- submit condominium do
+        exerciseCmd csCid UpdateListOfParties with newListOfParties = [ev_user1, ev_user2] 
+
+    requestUser2 <- submit ev_user2 do
+        createCmd UserEVRequest with ev_user = ev_user2, chargingStationId = csCid, energy_provider = energy_provider
+    
+    billUser2 <- submit energy_provider do
+        exerciseCmd requestUser2 AcceptRequest
+
+    requestCid <- submit ev_user1 do 
+        createCmd UserEVRequest with ev_user = ev_user1, chargingStationId = billUser2.cs_id, energy_provider = energy_provider 
+
+    billUser1 <-submit energy_provider do
+        exerciseCmd requestCid AcceptRequest
+
+    csCid <- submit energy_provider do
+        exerciseCmd billUser2.bill_id FinishCharging with current_chargingStationId = billUser1.cs_id
+
+    csCid <- submit energy_provider do
+        exerciseCmd billUser1.bill_id FinishCharging with current_chargingStationId = csCid
+
+
+    
+
+    return ()
+    
