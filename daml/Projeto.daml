@@ -4,7 +4,6 @@ import DA.List
 import Daml.Script
 
 type ChargingStationID = ContractId ChargingStation
--- type CPID = ContractId CP
 type BillID = ContractId Bill
 
 
@@ -25,23 +24,15 @@ template Offer
                     create chargingStation with listOfParties
               
         
-template UserEVRequest
-    with 
+data EVUserAndCP = EVUserAndCP
+    with
         ev_user : Party
-        chargingStationId : ChargingStationID
-        energy_provider : Party
-    where
-        signatory ev_user
-        observer energy_provider
+        cp_id : Text
+    deriving (Show)
 
-
-        choice AcceptRequest : DataTypeToReturnInAccpetRequest
-            controller energy_provider
-                do 
-                    result <- exercise chargingStationId GetFreeCP
-                    bill_id <-create Bill with energy_provider = energy_provider, energy_spend = 0.0, price = 0.0, hour = "00:00", ev_user = ev_user, cp_id = result.free_cp
-                    return DataTypeToReturnInAccpetRequest with bill_id = bill_id, cs_id = result.cs_id
-        
+instance Eq EVUserAndCP where
+    (EVUserAndCP user1 cp1) == (EVUserAndCP user2 cp2) = user1 == user2 && cp1 == cp2
+   
 
 
 template ChargingStation
@@ -51,10 +42,29 @@ template ChargingStation
         listOfParties : [Party]
         max_energy : Decimal
         cp_free : [Text]
+        cp_used : [EVUserAndCP]
     where
         ensure max_energy > 0.0
         signatory energy_provider, condominium
         observer listOfParties
+
+        choice UserEVRequestChoice : ChargingStationID
+            with
+                ev_user : Party
+            controller ev_user
+                do 
+                    if ev_user `notElem` listOfParties then 
+                        do 
+                            error "User not allowed to charge here"
+                            -- return this 
+                    else
+                        if not (null cp_free) then
+                            do
+                                let first_cp_free = head cp_free
+                                let new_cp_used = (EVUserAndCP with ev_user = ev_user, cp_id = first_cp_free) :: cp_used
+                                create this with cp_free = filter (/= first_cp_free) cp_free, cp_used = new_cp_used
+                        else do error "No Charging Points available"
+
 
         choice UpdateListOfParties : ChargingStationID
             with 
@@ -100,21 +110,23 @@ template ChargingStation
                     let newList = filter (/= cp_to_remove) cp_free
                     create this with cp_free = cp_free
 
-        choice GetFreeCP : DataTypeToReturnInGetFreeCP
-            controller energy_provider
-                do 
-                    if not (null cp_free) then 
-                        do 
-                            let first_cp_free = head cp_free
-                            cs_id <- create this with cp_free = filter (/= first_cp_free) cp_free
-                            return DataTypeToReturnInGetFreeCP with free_cp = first_cp_free, cs_id = cs_id
-                    else do error "No Charging Points available"
+        choice FinishCharging : DataTypeToReturnInAccpetRequest
+            with
+                ev_user : Party 
+                energy : Decimal
+                price : Decimal
+            controller ev_user
+                do
+                    let verification = find (\x -> x.ev_user == ev_user) cp_used
+                    case verification of
+                        (Some (EVUserAndCP user cp))  -> 
+                            do  
+                                bill_id <- create Bill with energy_provider = energy_provider, condominium = condominium, energy_spend = energy, price = price, hour = "00:00", ev_user = ev_user, cp_id = cp, isPaid = False
+                                cs_id <- create this with cp_free = cp :: cp_free, cp_used = filter (/= EVUserAndCP with ev_user = ev_user, cp_id = cp) cp_used
+                                return DataTypeToReturnInAccpetRequest with bill_id = bill_id, cs_id = cs_id 
+                        _ -> error "User not charging here"
 
-data DataTypeToReturnInGetFreeCP = DataTypeToReturnInGetFreeCP
-    with
-        free_cp : Text
-        cs_id : ChargingStationID
-
+       
 data DataTypeToReturnInAccpetRequest = DataTypeToReturnInAccpetRequest
     with
         bill_id : BillID
@@ -124,24 +136,32 @@ data DataTypeToReturnInAccpetRequest = DataTypeToReturnInAccpetRequest
 template Bill
     with 
         energy_provider : Party
+        condominium : Party
         energy_spend : Decimal
         price : Decimal
         hour : Text
         ev_user : Party
         cp_id : Text
+        isPaid : Bool
     where
         signatory energy_provider, ev_user
-        
+        observer condominium
 
-        choice FinishCharging : ChargingStationID
-            with 
-                current_chargingStationId : ChargingStationID
-            controller energy_provider
-                do 
-                    exercise current_chargingStationId AddNewCP with new_cp = cp_id
+        choice Pay : ()
+            controller ev_user
+                do
+                    bill_id <- create this with isPaid = True
+                    archive bill_id
                     
 
 
+
+-- como resolver a situacao do error caso nao esteja na listofparties
+-- experimentar criar um data type na listOfParties. O datatype tem uma parte e uma lista de Text (matriculas)
+-- como retirar user como Witness na Bill?
+-- é preciso fazer frontend?
+-- template Bill com choice Pagar. FinishCharging no ChargingStation e cria Bill. Feito
+-- falta verificar no request se o user tem dividas!!!!!
 
 setup : Script ()
 setup = script do
@@ -161,6 +181,10 @@ setup = script do
     ev_user2ID <- validateUserId "ev_user2"
     createUser (User ev_user2ID (Some ev_user2)) [CanActAs ev_user2]
 
+    userNotInListOfParties <- allocatePartyWithHint "userNotInListOfParties" (PartyIdHint "userNotInListOfParties")
+    userNotInListOfPartiesID <- validateUserId "userNotInListOfParties"
+    createUser (User userNotInListOfPartiesID (Some userNotInListOfParties)) [CanActAs userNotInListOfParties]
+
 
     let 
         chargingStation = ChargingStation 
@@ -170,6 +194,7 @@ setup = script do
                 listOfParties = []
                 max_energy = 100.0
                 cp_free = ["A1", "A2", "A3"]
+                cp_used = []
 
     offerCid <- submit energy_provider do 
         createCmd Offer with chargingStation
@@ -189,23 +214,23 @@ setup = script do
     csCid <- submit condominium do
         exerciseCmd csCid UpdateListOfParties with newListOfParties = [ev_user1, ev_user2] 
 
-    requestUser2 <- submit ev_user2 do
-        createCmd UserEVRequest with ev_user = ev_user2, chargingStationId = csCid, energy_provider = energy_provider
-    
-    billUser2 <- submit energy_provider do
-        exerciseCmd requestUser2 AcceptRequest
+    csCid <- submit ev_user2 do
+        exerciseCmd csCid UserEVRequestChoice with ev_user = ev_user2
 
-    requestCid <- submit ev_user1 do 
-        createCmd UserEVRequest with ev_user = ev_user1, chargingStationId = billUser2.cs_id, energy_provider = energy_provider 
+    csCid <- submit ev_user1 do 
+        exerciseCmd csCid UserEVRequestChoice with ev_user = ev_user1
 
-    billUser1 <-submit energy_provider do
-        exerciseCmd requestCid AcceptRequest
+    finishEVUser1 <- submit ev_user1 do
+        exerciseCmd csCid FinishCharging with ev_user = ev_user1, energy = 10.0, price = 10.0 
 
-    csCid <- submit energy_provider do
-        exerciseCmd billUser2.bill_id FinishCharging with current_chargingStationId = billUser1.cs_id
+    finishEVUser2 <- submit ev_user2 do
+        exerciseCmd finishEVUser1.cs_id FinishCharging with ev_user = ev_user2, energy = 10.0, price = 10.0 
 
-    csCid <- submit energy_provider do
-        exerciseCmd billUser1.bill_id FinishCharging with current_chargingStationId = csCid
+    submit ev_user1 do
+        exerciseCmd finishEVUser1.bill_id Pay
+
+    -- csCid <- submit userNotInListOfParties do
+    --     exerciseCmd finishEVUser2.cs_id FinishCharging with ev_user = userNotInListOfParties, energy = 10.0, price = 10.0
 
 
     
