@@ -40,6 +40,7 @@ template ChargingStation
         energy_provider : Party
         condominium : Party
         listOfParties : [Party]
+        usersWithDebts : [Party]
         max_energy : Decimal
         cp_free : [Text]
         cp_used : [EVUserAndCP]
@@ -58,12 +59,16 @@ template ChargingStation
                             error "User not allowed to charge here"
                             -- return this 
                     else
-                        if not (null cp_free) then
+                        if ev_user `elem` usersWithDebts then
                             do
-                                let first_cp_free = head cp_free
-                                let new_cp_used = (EVUserAndCP with ev_user = ev_user, cp_id = first_cp_free) :: cp_used
-                                create this with cp_free = filter (/= first_cp_free) cp_free, cp_used = new_cp_used
-                        else do error "No Charging Points available"
+                                error "User has debts"
+                        else
+                            if not (null cp_free) then
+                                do
+                                    let first_cp_free = head cp_free
+                                    let new_cp_used = (EVUserAndCP with ev_user = ev_user, cp_id = first_cp_free) :: cp_used
+                                    create this with cp_free = filter (/= first_cp_free) cp_free, cp_used = new_cp_used
+                            else do error "No Charging Points available"
 
 
         choice UpdateListOfParties : ChargingStationID
@@ -110,7 +115,15 @@ template ChargingStation
                     let newList = filter (/= cp_to_remove) cp_free
                     create this with cp_free = cp_free
 
-        choice FinishCharging : DataTypeToReturnInAccpetRequest
+        choice RemoveUserFromUserWithDebts : ChargingStationID
+            with 
+                user_to_remove : Party
+            controller energy_provider
+                do
+                    let newList = filter (/= user_to_remove) usersWithDebts
+                    create this with usersWithDebts = newList
+        
+        choice FinishCharging : BillidWithCSid
             with
                 ev_user : Party 
                 energy : Decimal
@@ -122,12 +135,12 @@ template ChargingStation
                         (Some (EVUserAndCP user cp))  -> 
                             do  
                                 bill_id <- create Bill with energy_provider = energy_provider, condominium = condominium, energy_spend = energy, price = price, hour = "00:00", ev_user = ev_user, cp_id = cp, isPaid = False
-                                cs_id <- create this with cp_free = cp :: cp_free, cp_used = filter (/= EVUserAndCP with ev_user = ev_user, cp_id = cp) cp_used
-                                return DataTypeToReturnInAccpetRequest with bill_id = bill_id, cs_id = cs_id 
+                                cs_id <- create this with usersWithDebts = ev_user :: usersWithDebts, cp_free = cp :: cp_free, cp_used = filter (/= EVUserAndCP with ev_user = ev_user, cp_id = cp) cp_used
+                                return BillidWithCSid with bill_id = bill_id, cs_id = cs_id 
                         _ -> error "User not charging here"
 
        
-data DataTypeToReturnInAccpetRequest = DataTypeToReturnInAccpetRequest
+data BillidWithCSid = BillidWithCSid
     with
         bill_id : BillID
         cs_id : ChargingStationID
@@ -147,21 +160,17 @@ template Bill
         signatory energy_provider, ev_user
         observer condominium
 
-        choice Pay : ()
-            controller ev_user
+        choice Pay : ChargingStationID
+            with
+                cs_id : ChargingStationID
+            controller ev_user, energy_provider
                 do
                     bill_id <- create this with isPaid = True
                     archive bill_id
+                    exercise cs_id RemoveUserFromUserWithDebts with user_to_remove = ev_user 
                     
 
 
-
--- como resolver a situacao do error caso nao esteja na listofparties
--- experimentar criar um data type na listOfParties. O datatype tem uma parte e uma lista de Text (matriculas)
--- como retirar user como Witness na Bill?
--- é preciso fazer frontend?
--- template Bill com choice Pagar. FinishCharging no ChargingStation e cria Bill. Feito
--- falta verificar no request se o user tem dividas!!!!!
 
 setup : Script ()
 setup = script do
@@ -192,6 +201,7 @@ setup = script do
                 energy_provider = energy_provider
                 condominium = condominium
                 listOfParties = []
+                usersWithDebts = []
                 max_energy = 100.0
                 cp_free = ["A1", "A2", "A3"]
                 cp_used = []
@@ -223,16 +233,18 @@ setup = script do
     finishEVUser1 <- submit ev_user1 do
         exerciseCmd csCid FinishCharging with ev_user = ev_user1, energy = 10.0, price = 10.0 
 
-    finishEVUser2 <- submit ev_user2 do
-        exerciseCmd finishEVUser1.cs_id FinishCharging with ev_user = ev_user2, energy = 10.0, price = 10.0 
+    csCid <- submitMulti [ev_user1, energy_provider] [] do
+        exerciseCmd finishEVUser1.bill_id Pay with cs_id = finishEVUser1.cs_id
 
-    submit ev_user1 do
-        exerciseCmd finishEVUser1.bill_id Pay
+    finishEVUser2 <- submit ev_user2 do
+        exerciseCmd csCid FinishCharging with ev_user = ev_user2, energy = 10.0, price = 10.0 
+
 
     -- csCid <- submit userNotInListOfParties do
     --     exerciseCmd finishEVUser2.cs_id FinishCharging with ev_user = userNotInListOfParties, energy = 10.0, price = 10.0
 
-
+    -- csCid <- submit ev_user2 do
+    --     exerciseCmd csCid UserEVRequestChoice with ev_user = ev_user2
     
 
     return ()

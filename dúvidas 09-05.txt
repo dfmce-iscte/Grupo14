@@ -1,0 +1,19 @@
+1. Como resolver a situação do error caso não esteja na listOfParties, não haja CP_Free e caso não
+seja o User a carregar a pedir o Finish?
+
+
+2. Como retirar os restantes Users de Witness na Bill?
+
+
+3. É preciso fazer frontend?
+
+
+4. O template Bill com a choice Pagar em que arquiva o contrato é aceitável?
+
+
+5. Na choice UpdateMaxEnergy do template ChargingStation basta um dos controllers ou tem de haver concordância?
+
+
+6. A choice FinishCharging tem como parâmetros ev_user, energy e price e ev_user como controller. Existe hipótese de o ev_user "aldrabar" a energy e o price? Ou há forma de ser uma "app" ou outra plataforma a dar esses valores?
+
+
