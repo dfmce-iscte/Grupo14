@@ -1,0 +1,75 @@
+template CPFree (representa um charging point disponível)
+	with
+		energy_provider, condominium, cpID
+	where
+		signatory energy_provider, condominium
+		key (energy_provider, condominium, cp) : (Party, Party, Text)
+        	maintainer key._1, key._2 (isto serve para garantir que não existe 2 CP no mesmo grupo de condomínio com id iguais)
+
+	choice Use : ContractID CPUsed
+		with
+			ev_user : Party
+			cid : ChargingStationID
+		controller energy_provider (?)
+			do exercise cid UpdateCPFreeToCPUsed with ...
+
+template CPUsed (representa um charging point a ser usado)
+	with 
+		energy_provider, condominium, cpID, ev_user
+				
+	where 
+		signatory energy_provider, ev_user
+		observer condominium
+
+	choice Finish : ContractID CPFree
+		with
+			cid : ChargingStationID
+		controller energy_provider (?)
+			do exercise cid UpdateCPUsedToCPFree with ...
+
+template ListOfCPUsed
+	with
+		listOfCPUsed : [CPUsed]
+		energy_provider : Party
+		condominium : Party
+	where
+		signatory energy_provider, condominium
+	
+	choice Add : ContractID ListOfCPUsed
+		...
+
+	choice Remove : ContractID ListOfCPUsed
+		...
+
+template ListOfCPFree
+	with
+		listOfCPFree : [CPFree]
+		energy_provider : Party
+		condominium : Party
+	where
+		signatory energy_provider, condominium
+	
+	choice Add : ContractID ListOfCPFree
+		...
+
+	choice Remove : ContractID ListOfCPFree
+		...
+	
+	
+template ListOfUsersWithDebt
+	with
+		listOfUsersWithDebt : [Party]
+		energy_provider : Party
+		condominium : Party
+	where
+		signatory energy_provider, condominium
+	
+	choice Add : ContractID ListOfUsersWithDebt
+		...
+
+	choice Remove : ContractID ListOfUsersWithDebt
+		...
+
+template ChargingStation
+	
+			
