@@ -1,0 +1,251 @@
+module Projeto where
+
+import DA.List 
+import Daml.Script
+
+type ChargingStationID = ContractId ChargingStation
+type BillID = ContractId Bill
+
+
+-- Condominio, condóminos, energyProvider (quem põe as chargingStations)
+
+template Offer
+    with
+        chargingStation : ChargingStation
+    where
+        signatory chargingStation.energy_provider
+        observer chargingStation.condominium
+
+        choice Accept : ChargingStationID 
+            with
+                listOfParties : [Party]
+            controller chargingStation.condominium
+                do
+                    create chargingStation with listOfParties
+              
+        
+data EVUserAndCP = EVUserAndCP
+    with
+        ev_user : Party
+        cp_id : Text
+    deriving (Show)
+
+instance Eq EVUserAndCP where
+    (EVUserAndCP user1 cp1) == (EVUserAndCP user2 cp2) = user1 == user2 && cp1 == cp2
+   
+
+
+template ChargingStation
+    with 
+        energy_provider : Party
+        condominium : Party
+        listOfParties : [Party]
+        usersWithDebts : [Party]
+        max_energy : Decimal
+        cp_free : [Text]
+        cp_used : [EVUserAndCP]
+    where
+        ensure max_energy > 0.0
+        signatory energy_provider, condominium
+        observer listOfParties
+
+        choice UserEVRequestChoice : ChargingStationID
+            with
+                ev_user : Party
+            controller ev_user
+                do 
+                    if ev_user `notElem` listOfParties then 
+                        do 
+                            error "User not allowed to charge here"
+                            -- return this 
+                    else
+                        if ev_user `elem` usersWithDebts then
+                            do
+                                error "User has debts"
+                        else
+                            if not (null cp_free) then
+                                do
+                                    let first_cp_free = head cp_free
+                                    let new_cp_used = (EVUserAndCP with ev_user = ev_user, cp_id = first_cp_free) :: cp_used
+                                    create this with cp_free = filter (/= first_cp_free) cp_free, cp_used = new_cp_used
+                            else do error "No Charging Points available"
+
+
+        choice UpdateListOfParties : ChargingStationID
+            with 
+                newListOfParties : [Party]
+            controller condominium
+                do
+                    create this with listOfParties = newListOfParties
+        
+        choice AddNewParty : ChargingStationID
+            with 
+                newParty : Party
+            controller condominium
+                do
+                    create this with listOfParties = newParty :: listOfParties
+
+        choice RemoveParty : ChargingStationID
+            with 
+                party_to_remove : Party
+            controller condominium
+                do
+                    let newList = filter (/= party_to_remove) listOfParties
+                    create this with listOfParties = newList
+
+        choice UpdateMaxEnergy : ChargingStationID
+            with 
+                new_max_energy : Decimal
+            controller energy_provider, condominium --basta um deles para atualizar ou tem de haver concordância?
+                do
+                    create this with max_energy = new_max_energy
+
+        choice AddNewCP : ChargingStationID
+            with 
+                new_cp : Text
+            controller energy_provider
+                do
+                    create this with cp_free = new_cp :: cp_free
+            
+        choice RemoveCP : ChargingStationID
+            with 
+                cp_to_remove : Text
+            controller energy_provider
+                do
+                    let newList = filter (/= cp_to_remove) cp_free
+                    create this with cp_free = cp_free
+
+        choice RemoveUserFromUserWithDebts : ChargingStationID
+            with 
+                user_to_remove : Party
+            controller energy_provider
+                do
+                    let newList = filter (/= user_to_remove) usersWithDebts
+                    create this with usersWithDebts = newList
+        
+        choice FinishCharging : BillidWithCSid
+            with
+                ev_user : Party 
+                energy : Decimal
+                price : Decimal
+            controller ev_user
+                do
+                    let verification = find (\x -> x.ev_user == ev_user) cp_used
+                    case verification of
+                        (Some (EVUserAndCP user cp))  -> 
+                            do  
+                                bill_id <- create Bill with energy_provider = energy_provider, condominium = condominium, energy_spend = energy, price = price, hour = "00:00", ev_user = ev_user, cp_id = cp, isPaid = False
+                                cs_id <- create this with usersWithDebts = ev_user :: usersWithDebts, cp_free = cp :: cp_free, cp_used = filter (/= EVUserAndCP with ev_user = ev_user, cp_id = cp) cp_used
+                                return BillidWithCSid with bill_id = bill_id, cs_id = cs_id 
+                        _ -> error "User not charging here"
+
+       
+data BillidWithCSid = BillidWithCSid
+    with
+        bill_id : BillID
+        cs_id : ChargingStationID
+
+
+template Bill
+    with 
+        energy_provider : Party
+        condominium : Party
+        energy_spend : Decimal
+        price : Decimal
+        hour : Text
+        ev_user : Party
+        cp_id : Text
+        isPaid : Bool
+    where
+        signatory energy_provider, ev_user
+        observer condominium
+
+        choice Pay : ChargingStationID
+            with
+                cs_id : ChargingStationID
+            controller ev_user, energy_provider
+                do
+                    bill_id <- create this with isPaid = True
+                    archive bill_id
+                    exercise cs_id RemoveUserFromUserWithDebts with user_to_remove = ev_user 
+                    
+
+
+
+setup : Script ()
+setup = script do
+    energy_provider <- allocatePartyWithHint "CS" (PartyIdHint "CS")
+    csID <- validateUserId "cs"
+    createUser (User csID (Some energy_provider)) [CanActAs energy_provider]
+
+    condominium <- allocatePartyWithHint "Condominium" (PartyIdHint "Condominium")
+    condominiumID <- validateUserId "condominium"
+    createUser (User condominiumID (Some condominium)) [CanActAs condominium]
+
+    ev_user1 <-  allocatePartyWithHint "EV_user1" (PartyIdHint "EV_user1")
+    ev_user1ID <- validateUserId "ev_user1"
+    createUser (User ev_user1ID (Some ev_user1)) [CanActAs ev_user1]
+
+    ev_user2 <-  allocatePartyWithHint "EV_user2" (PartyIdHint "EV_user2")
+    ev_user2ID <- validateUserId "ev_user2"
+    createUser (User ev_user2ID (Some ev_user2)) [CanActAs ev_user2]
+
+    userNotInListOfParties <- allocatePartyWithHint "userNotInListOfParties" (PartyIdHint "userNotInListOfParties")
+    userNotInListOfPartiesID <- validateUserId "userNotInListOfParties"
+    createUser (User userNotInListOfPartiesID (Some userNotInListOfParties)) [CanActAs userNotInListOfParties]
+
+
+    let 
+        chargingStation = ChargingStation 
+            with 
+                energy_provider = energy_provider
+                condominium = condominium
+                listOfParties = []
+                usersWithDebts = []
+                max_energy = 100.0
+                cp_free = ["A1", "A2", "A3"]
+                cp_used = []
+
+    offerCid <- submit energy_provider do 
+        createCmd Offer with chargingStation
+
+    csCid <- submit condominium do
+        exerciseCmd offerCid Accept
+            with 
+                listOfParties = [ev_user1]
+
+
+    csCid <- submit condominium do
+        exerciseCmd csCid AddNewParty with newParty = ev_user2
+
+    csCid <- submit condominium do
+        exerciseCmd csCid RemoveParty with party_to_remove = ev_user1
+
+    csCid <- submit condominium do
+        exerciseCmd csCid UpdateListOfParties with newListOfParties = [ev_user1, ev_user2] 
+
+    csCid <- submit ev_user2 do
+        exerciseCmd csCid UserEVRequestChoice with ev_user = ev_user2
+
+    csCid <- submit ev_user1 do 
+        exerciseCmd csCid UserEVRequestChoice with ev_user = ev_user1
+
+    finishEVUser1 <- submit ev_user1 do
+        exerciseCmd csCid FinishCharging with ev_user = ev_user1, energy = 10.0, price = 10.0 
+
+    csCid <- submitMulti [ev_user1, energy_provider] [] do
+        exerciseCmd finishEVUser1.bill_id Pay with cs_id = finishEVUser1.cs_id
+
+    finishEVUser2 <- submit ev_user2 do
+        exerciseCmd csCid FinishCharging with ev_user = ev_user2, energy = 10.0, price = 10.0 
+
+
+    -- csCid <- submit userNotInListOfParties do
+    --     exerciseCmd finishEVUser2.cs_id FinishCharging with ev_user = userNotInListOfParties, energy = 10.0, price = 10.0
+
+    -- csCid <- submit ev_user2 do
+    --     exerciseCmd csCid UserEVRequestChoice with ev_user = ev_user2
+    
+
+    return ()
+    

@@ -205,7 +205,24 @@ template ChargingStation
         signatory energy_provider, condominium
         observer listOfParties
 
+        nonconsuming choice createListOfCPUsed : ListOfCPUsedID
+            controller energy_provider
+                do
+                    create this with listOfCPUsed = [], energy_provider = energy_provider, condominium = condominium
+
+        nonconsuming choice createListOfCPFree : ListOfCPFreeID
+            with
+                listOfCPFree : [Text]
+            controller energy_provider
+                do
+                    create this with listOfCPFree = listOfCPFree, energy_provider = energy_provider, condominium = condominium 
+
         
+
+        nonconsuming choice createListOfUsersWithDebt : ListOfUsersWithDebtID
+            controller energy_provider
+                do
+                    create this with listOfUsersWithDebt = [], energy_provider = energy_provider, condominium = condominium
 
         nonconsuming choice RequestCPFreeToCPUsed : ContractId UserRequestCharging
             with 
