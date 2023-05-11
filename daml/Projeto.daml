@@ -362,8 +362,7 @@ template RequestFinishCharge
                     bill_id <- create Bill with energy_provider = energy_provider, condominium = cs_id.condominium, ev_user = ev_user, energy_spend = energy_spend, price = price, isPaid = False, cp_id = cp_used.cp_id
                     archive cp_used
                     return (AllListsAndBill with list_free = lists.list_free, list_used = lists.list_used, list_users_with_debt = listOfUsersWithDebt_id, bill_id = bill_id)
-
-    
+--teste
 
 -- data BillidWithCSid = BillidWithCSid
 --     with
