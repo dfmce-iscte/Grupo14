@@ -11,20 +11,6 @@ type CPUsedID = ContractId CPUsed
 
 -- Condominio, condóminos, energyProvider (quem põe as chargingStations)
 
-data ListsAndCPUsed = ListsAndCPUsed
-    with    
-        list_free : ListOfCPFreeID
-        list_used : ListOfCPUsedID
-        cp_used : CPUsedID
-
-data CPLists = CPLists
-    with    
-        list_free : ListOfCPFreeID
-        list_used : ListOfCPUsedID
-
-
-
---Energy_provider faz offer ao Condominio
 template Offer
     with
         chargingStation : ChargingStation
@@ -39,6 +25,34 @@ template Offer
                 do
                     create chargingStation with listOfParties
               
+        
+-- data EVUserAndCP = EVUserAndCP
+--     with
+--         ev_user : Party
+--         cp_id : Text
+--     deriving (Show)
+
+-- instance Eq EVUserAndCP where
+--     (EVUserAndCP user1 cp1) == (EVUserAndCP user2 cp2) = user1 == user2 && cp1 == cp2
+
+
+-- template CPFree --representa um charging point livre
+--     with
+--         energy_provider : Party
+--         condominium : Party
+--         cp_id : Text
+--     where
+--         signatory energy_provider, condominium
+--         key (energy_provider, condominium, cp_id) : (Party, Party, Text)
+--         maintainer key._1, key._2
+
+--         choice Use : ContractId CPUsed 
+--             with
+--                 ev_user : Party
+--                 cid : ChargingStationID
+--             controller ev_user
+--                 do
+--                     exercise cid UpdateCpFreeAndUsed with ev_user = ev_user,  cp_id = cp_id
 
 template ListOfCPFree
     with
@@ -103,7 +117,7 @@ template CPUsed
         --             else
         --                 create this with isConnected = True
 
-        nonconsuming choice RequestFinishing : ContractId RequestFinishCharge
+        nonconsuming choice Finish : ContractId RequestFinishCharge
             controller ev_user
                 do
                     create RequestFinishCharge with ev_user = ev_user, energy_provider = energy_provider, cp_used = self, cp_id = cp_id 
@@ -133,7 +147,6 @@ template ListOfCPUsed
                 do 
                     let newList = filter (/= cp_used) listOfCPUsed
                     create this with listOfCPUsed = newList
-
 
 template ListOfUsersWithDebt
     with
@@ -187,13 +200,26 @@ template UserRequestCharging
                 do exercise cs_id ApproveRequestCPFreeToCPUsed with ev_user = ev_user, listOfCPFree = listOfCPFree, listOfUsersWithDebt = listOfUsersWithDebt, listOfCPUsed = listOfCPUsed
 
 
+data ListsAndCPUsed = ListsAndCPUsed
+    with    
+        list_free : ListOfCPFreeID
+        list_used : ListOfCPUsedID
+        cp_used : CPUsedID
+
+data CPLists = CPLists
+    with    
+        list_free : ListOfCPFreeID
+        list_used : ListOfCPUsedID
 
 template ChargingStation
     with
         energy_provider : Party
         condominium : Party
         listOfParties : [Party]
+        -- usersWithDebts : [Party] 
         max_energy : Decimal
+        -- cp_free : ListOfCPFreeID
+        -- cp_used : ListOfCPUsedID
     where
         ensure max_energy > 0.0
         signatory energy_provider, condominium
@@ -292,13 +318,62 @@ template ChargingStation
                     let newList = filter (/= party_to_remove) listOfParties
                     create this with listOfParties = newList
 
-        -- choice UpdateMaxEnergy : ChargingStationID
-        --     with 
-        --         new_max_energy : Decimal
-        --     controller energy_provider, condominium 
-        --         do
-        --             create this with max_energy = new_max_energy
+        choice UpdateMaxEnergy : ChargingStationID
+            with 
+                new_max_energy : Decimal
+            controller energy_provider, condominium 
+                do
+                    create this with max_energy = new_max_energy
 
+        -- choice AddNewCP : ChargingStationID
+        --     with 
+        --         new_cp : Text
+        --     controller energy_provider
+        --         do
+        --             create this with cp_free = new_cp :: cp_free
+            
+        -- choice RemoveCP : ChargingStationID
+        --     with 
+        --         cp_to_remove : Text
+        --     controller energy_provider
+        --         do
+        --             let newList = filter (/= cp_to_remove) cp_free
+        --             create this with cp_free = cp_free
+
+
+        -- choice RemoveUserFromUserWithDebts : ChargingStationID
+        --     with 
+        --         user_to_remove : Party
+        --     controller energy_provider
+        --         do
+        --             let newList = filter (/= user_to_remove) usersWithDebts
+        --             create this with usersWithDebts = newList
+
+        -- choice Call : ContractId Type with
+        --    party : Party
+        --  controller party
+        --     do
+              
+        -- nonconsuming choice RequestFinishCharging : RequestFinishChargeId
+        --     controller ev_user
+        --         do
+        --             create RequestFinishCharge with ev_user, energy_provider
+
+        -- choice ApproveFinishCharging : BillidWithCSid
+        --     with
+        --         ev_user : Party 
+        --         energy : Decimal
+        --         price : Decimal
+        --     controller ev_user, energy_provider
+        --         do
+        --             let verification = find (\x -> x.ev_user == ev_user) cp_used
+        --             case verification of
+        --                 (Some (EVUserAndCP user cp))  -> 
+        --                     do  
+        --                         bill_id <- create Bill with energy_provider = energy_provider, condominium = condominium, energy_spend = energy, price = price, hour = "00:00", ev_user = ev_user, cp_id = cp, isPaid = False
+        --                         cs_id <- create this with usersWithDebts = ev_user :: usersWithDebts, cp_free = cp :: cp_free, cp_used = filter (/= EVUserAndCP with ev_user = ev_user, cp_id = cp) cp_used
+        --                         return BillidWithCSid with bill_id = bill_id, cs_id = cs_id 
+        --                 _ -> error "User not charging here"
 
 data AllListsAndBill = AllListsAndBill
     with 
@@ -332,6 +407,12 @@ template RequestFinishCharge
                     bill_id <- create Bill with energy_provider = energy_provider, condominium = condominium, ev_user = ev_user, energy_spend = energy_spend, price = price, isPaid = False, cp_id = cp_id
                     archive cp_used
                     return (AllListsAndBill with list_free = lists.list_free, list_used = lists.list_used, list_users_with_debt = listOfUsersWithDebt_id, bill_id = bill_id)
+--teste
+
+-- data BillidWithCSid = BillidWithCSid
+--     with
+--         bill_id : BillID
+--         cs_id : ChargingStationID
 
 
 template UserRequestCompletedPayment
@@ -359,6 +440,7 @@ template Bill
         condominium : Party
         energy_spend : Decimal
         price : Decimal
+        -- hour : Text
         ev_user : Party
         cp_id : Text
         isPaid : Bool

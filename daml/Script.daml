@@ -1,0 +1,121 @@
+module Script where
+
+import Daml.Script
+import Projeto
+
+setup : Script ()
+setup = script do
+    energy_provider <- allocatePartyWithHint "CS" (PartyIdHint "CS")
+    csID <- validateUserId "cs"
+    createUser (User csID (Some energy_provider)) [CanActAs energy_provider]
+
+    condominium <- allocatePartyWithHint "Condominium" (PartyIdHint "Condominium")
+    condominiumID <- validateUserId "condominium"
+    createUser (User condominiumID (Some condominium)) [CanActAs condominium]
+
+    ev_user1 <-  allocatePartyWithHint "EV_user1" (PartyIdHint "EV_user1")
+    ev_user1ID <- validateUserId "ev_user1"
+    createUser (User ev_user1ID (Some ev_user1)) [CanActAs ev_user1]
+
+    ev_user2 <-  allocatePartyWithHint "EV_user2" (PartyIdHint "EV_user2")
+    ev_user2ID <- validateUserId "ev_user2"
+    createUser (User ev_user2ID (Some ev_user2)) [CanActAs ev_user2]
+
+    userNotInListOfParties <- allocatePartyWithHint "userNotInListOfParties" (PartyIdHint "userNotInListOfParties")
+    userNotInListOfPartiesID <- validateUserId "userNotInListOfParties"
+    createUser (User userNotInListOfPartiesID (Some userNotInListOfParties)) [CanActAs userNotInListOfParties]
+
+
+    let 
+        chargingStation = ChargingStation 
+            with 
+                energy_provider = energy_provider
+                condominium = condominium
+                listOfParties = []
+                max_energy = 100.0
+
+
+    offerCid <- submit energy_provider do 
+        createCmd Offer with chargingStation
+
+    csCid <- submit condominium do
+        exerciseCmd offerCid Accept
+            with 
+                listOfParties = [ev_user1]
+
+    listOfCPFree <- submit energy_provider do
+        exerciseCmd csCid CreateListOfCPFree with listOfCPFree = ["A1","A2","A3"]
+
+    listOfCPUsed <- submit energy_provider do
+        exerciseCmd csCid CreateListOfCPUsed 
+        
+    listOfUsersWithDebt <- submit energy_provider do
+        exerciseCmd csCid CreateListOfUsersWithDebt 
+    --configuração incial concluída
+
+    --testes a adicionar/remover parties
+    csCid <- submit condominium do
+        exerciseCmd csCid AddNewParty with new_party = ev_user2
+
+    csCid <- submit condominium do
+        exerciseCmd csCid RemoveParty with party_to_remove = ev_user1
+
+    csCid <- submit condominium do
+        exerciseCmd csCid UpdateListOfParties with newListOfParties = [ev_user1, ev_user2] 
+    -- testes a adicionar/remover parties feitos
+
+
+    --User2 faz um request para carregar o carro
+    requestUser2 <- submit ev_user2 do
+        exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = ev_user2
+
+    --User1 faz um request para carregar o carro
+    requestUser1 <- submit ev_user1 do 
+        exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = ev_user1
+    
+    --request do User2 é aprovado
+    resultUser2 <- submit energy_provider do
+        exerciseCmd requestUser2 Approve with cs_id = csCid, listOfCPFree = listOfCPFree, listOfUsersWithDebt = listOfUsersWithDebt, listOfCPUsed = listOfCPUsed
+
+    --request do User1 é aprovado
+    resultUser1 <- submit energy_provider do
+        exerciseCmd requestUser1 Approve with cs_id = csCid, listOfCPFree = resultUser2.list_free, listOfUsersWithDebt = listOfUsersWithDebt, listOfCPUsed = resultUser2.list_used
+
+    let listOfCPFree = resultUser1.list_free
+    let listOfCPUsed = resultUser1.list_used
+
+    -- user1 faz request para terminar o carregamento
+    requestfinishUser1 <- submit ev_user1 do
+        exerciseCmd resultUser1.cp_used RequestFinishing 
+
+    -- request para terminar o carregamento do user1 é aprovado
+    resultApproveFinishUser1 <- submit energy_provider do
+        exerciseCmd requestfinishUser1 ApproveRequestFinishCharge with condominium = condominium, energy_spend = 0.0, price = 0.0, listOfCPFree_id = listOfCPFree, listOfCPUsed_id = listOfCPUsed, listOfUsersWithDebt_id = listOfUsersWithDebt, cs_id = csCid
+
+    let listOfCPFree = resultApproveFinishUser1.list_free
+    let listOfCPUsed = resultApproveFinishUser1.list_used
+    let listOfUsersWithDebt = resultApproveFinishUser1.list_users_with_debt
+
+    --criada bill do User1
+
+    -- user2 faz request para terminar o carregamento
+    requestfinishUser2 <- submit ev_user2 do
+        exerciseCmd resultUser2.cp_used RequestFinishing 
+
+    -- request para terminar o carregamento do user2 é aprovado
+    resultApproveFinishUser2 <- submit energy_provider do
+        exerciseCmd requestfinishUser2 ApproveRequestFinishCharge with condominium = condominium, energy_spend = 0.0, price = 0.0, listOfCPFree_id = listOfCPFree, listOfCPUsed_id = listOfCPUsed, listOfUsersWithDebt_id = listOfUsersWithDebt, cs_id = csCid
+
+    let listOfCPFree = resultApproveFinishUser2.list_free
+    let listOfCPUsed = resultApproveFinishUser2.list_used
+    let listOfUsersWithDebt = resultApproveFinishUser2.list_users_with_debt
+
+    --user1 faz request para concluir o pagamento
+    requestPaymentUser1 <- submit ev_user1 do
+        exerciseCmd resultApproveFinishUser1.bill_id RequestCompletedPayment
+    --energy_provider aprova o request do user1
+    listOfUsersWithDebt <- submit energy_provider do
+        exerciseCmd requestPaymentUser1 ApproveUserRequestCompletedPayment with listOfUsersWithDebt_id = listOfUsersWithDebt
+    
+    return ()
+    
