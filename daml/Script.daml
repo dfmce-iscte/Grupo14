@@ -33,6 +33,7 @@ setup = script do
                 condominium = condominium
                 listOfParties = []
                 max_energy = 100.0
+                cpList = []
 
 
     offerCid <- submit energy_provider do 
@@ -41,16 +42,7 @@ setup = script do
     csCid <- submit condominium do
         exerciseCmd offerCid Accept
             with 
-                listOfParties = [ev_user1]
-
-    listOfCPFree <- submit energy_provider do
-        exerciseCmd csCid CreateListOfCPFree with listOfCPFree = ["A1","A2","A3"]
-
-    listOfCPUsed <- submit energy_provider do
-        exerciseCmd csCid CreateListOfCPUsed 
-        
-    listOfUsersWithDebt <- submit energy_provider do
-        exerciseCmd csCid CreateListOfUsersWithDebt 
+                listOfParties = [ev_user1], cpList = ["A1","A2","A3"]
     --configuração incial concluída
 
     --testes a adicionar/remover parties
@@ -74,48 +66,36 @@ setup = script do
         exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = ev_user1
     
     --request do User2 é aprovado
-    resultUser2 <- submit energy_provider do
-        exerciseCmd requestUser2 Approve with cs_id = csCid, listOfCPFree = listOfCPFree, listOfUsersWithDebt = listOfUsersWithDebt, listOfCPUsed = listOfCPUsed
+    cpUser2 <- submit energy_provider do
+        exerciseCmd requestUser2 Approve with cs_id = csCid
 
     --request do User1 é aprovado
-    resultUser1 <- submit energy_provider do
-        exerciseCmd requestUser1 Approve with cs_id = csCid, listOfCPFree = resultUser2.list_free, listOfUsersWithDebt = listOfUsersWithDebt, listOfCPUsed = resultUser2.list_used
-
-    let listOfCPFree = resultUser1.list_free
-    let listOfCPUsed = resultUser1.list_used
+    cpUser1 <- submit energy_provider do
+        exerciseCmd requestUser1 Approve with cs_id = csCid
 
     -- user1 faz request para terminar o carregamento
     requestfinishUser1 <- submit ev_user1 do
-        exerciseCmd resultUser1.cp_used RequestFinishing 
+        exerciseCmd cpUser1 RequestFinishing 
 
     -- request para terminar o carregamento do user1 é aprovado
-    resultApproveFinishUser1 <- submit energy_provider do
-        exerciseCmd requestfinishUser1 ApproveRequestFinishCharge with condominium = condominium, energy_spend = 0.0, price = 0.0, listOfCPFree_id = listOfCPFree, listOfCPUsed_id = listOfCPUsed, listOfUsersWithDebt_id = listOfUsersWithDebt, cs_id = csCid
-
-    let listOfCPFree = resultApproveFinishUser1.list_free
-    let listOfCPUsed = resultApproveFinishUser1.list_used
-    let listOfUsersWithDebt = resultApproveFinishUser1.list_users_with_debt
-
+    debtUser1 <- submit energy_provider do
+        exerciseCmd requestfinishUser1 ApproveRequestFinishCharge with price = 8.75, cs_id = csCid
     --criada bill do User1
 
     -- user2 faz request para terminar o carregamento
     requestfinishUser2 <- submit ev_user2 do
-        exerciseCmd resultUser2.cp_used RequestFinishing 
+        exerciseCmd cpUser2 RequestFinishing 
 
     -- request para terminar o carregamento do user2 é aprovado
-    resultApproveFinishUser2 <- submit energy_provider do
-        exerciseCmd requestfinishUser2 ApproveRequestFinishCharge with condominium = condominium, energy_spend = 0.0, price = 0.0, listOfCPFree_id = listOfCPFree, listOfCPUsed_id = listOfCPUsed, listOfUsersWithDebt_id = listOfUsersWithDebt, cs_id = csCid
-
-    let listOfCPFree = resultApproveFinishUser2.list_free
-    let listOfCPUsed = resultApproveFinishUser2.list_used
-    let listOfUsersWithDebt = resultApproveFinishUser2.list_users_with_debt
+    debtUser2 <- submit energy_provider do
+        exerciseCmd requestfinishUser2 ApproveRequestFinishCharge with price = 10.0, cs_id = csCid
 
     --user1 faz request para concluir o pagamento
     requestPaymentUser1 <- submit ev_user1 do
-        exerciseCmd resultApproveFinishUser1.bill_id RequestCompletedPayment
+        exerciseCmd debtUser1 RequestToCompletePayment
     --energy_provider aprova o request do user1
-    listOfUsersWithDebt <- submit energy_provider do
-        exerciseCmd requestPaymentUser1 ApproveUserRequestCompletedPayment with listOfUsersWithDebt_id = listOfUsersWithDebt
+    submit energy_provider do
+        exerciseCmd requestPaymentUser1 ApproveUserRequestToCompletePayment
     
     return ()
     

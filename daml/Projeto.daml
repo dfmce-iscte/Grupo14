@@ -1,27 +1,13 @@
 module Projeto where
 
+import DA.List
 
 type ChargingStationID = ContractId ChargingStation
-type BillID = ContractId Bill
-type ListOfCPFreeID = ContractId ListOfCPFree
-type ListOfCPUsedID = ContractId ListOfCPUsed
-type ListOfUsersWithDebtID = ContractId ListOfUsersWithDebt
 -- type CPFreeID = ContractId CPFree
 type CPUsedID = ContractId CPUsed
+type UserWithDebtID = ContractId UserWithDebt
 
 -- Condominio, condóminos, energyProvider (quem põe as chargingStations)
-
-data ListsAndCPUsed = ListsAndCPUsed
-    with    
-        list_free : ListOfCPFreeID
-        list_used : ListOfCPUsedID
-        cp_used : CPUsedID
-
-data CPLists = CPLists
-    with    
-        list_free : ListOfCPFreeID
-        list_used : ListOfCPUsedID
-
 
 
 --Energy_provider faz offer ao Condominio
@@ -35,51 +21,13 @@ template Offer
         choice Accept : ChargingStationID 
             with
                 listOfParties : [Party]
+                cpList : [Text]
             controller chargingStation.condominium
                 do
-                    create chargingStation with listOfParties
+                    mapA (\x -> create CPFree with energy_provider = chargingStation.energy_provider; condominium = chargingStation.condominium; cp = x) cpList
+                    create chargingStation with listOfParties, cpList = cpList
               
 
-template ListOfCPFree
-    with
-        listOfCPFree : [Text]
-        energy_provider : Party
-        condominium : Party
-    where
-        signatory energy_provider, condominium
-
-        choice Add : ListOfCPFreeID
-            with
-                cp_free : Text
-            controller energy_provider
-                do 
-                    if cp_free `notElem` listOfCPFree then 
-                        do  create this with listOfCPFree = cp_free :: listOfCPFree
-                    else
-                        do error "Charging point already exists"
-
-        choice Remove : ListOfCPFreeID
-            with 
-                cp_free : Text
-            controller energy_provider
-                do 
-                    let newList = filter (/= cp_free) listOfCPFree
-                    create this with listOfCPFree = newList
-
-        nonconsuming choice GetFirst : Text
-            controller energy_provider
-                do 
-                    case listOfCPFree of
-                        [] -> error "No charging points available"
-                        x :: xs -> do
-                            return x
-
-        nonconsuming choice IsEmpty : Bool
-            controller energy_provider
-                do 
-                    case listOfCPFree of
-                        [] -> return True
-                        x :: xs -> return False
 
 template CPUsed
     with 
@@ -87,104 +35,75 @@ template CPUsed
         condominium : Party
         ev_user : Party
         cp_id : Text
-        -- isConnected : Bool
+        power : Decimal
     where
-        signatory energy_provider
-        observer condominium, ev_user
+        signatory energy_provider, condominium
+        observer ev_user
+        key (energy_provider, condominium, ev_user) : (Party, Party, Party)
+        maintainer [key._1, key._2]
 
-        -- choice Use : CPUsedID
-        --     with
-        --         listOfCPUsed : ListOfCPUsedID --o user pode aldabrar o id?
-        --     controller ev_user
-        --         do
-        --             if isConnected then
-        --                 do
-        --                     error "Charging point is already being used"
-        --             else
-        --                 create this with isConnected = True
 
         nonconsuming choice RequestFinishing : ContractId RequestFinishCharge
             controller ev_user
                 do
-                    create RequestFinishCharge with ev_user = ev_user, energy_provider = energy_provider, cp_used = self, cp_id = cp_id 
+                    create RequestFinishCharge with ev_user = ev_user, condominium = condominium, energy_provider = energy_provider, cp_id = cp_id 
 
         
 
+template CPFree
+  with
+    energy_provider : Party
+    condominium : Party
+    cp : Text
+  where
+    signatory condominium, energy_provider
+    key (energy_provider, condominium, cp) : (Party, Party, Text)
+    maintainer [key._1, key._2]
 
-template ListOfCPUsed
-    with
-        listOfCPUsed : [CPUsedID]
+
+template UserWithDebt 
+    with 
+        ev_user : Party
         energy_provider : Party
         condominium : Party
+        price : Decimal
     where
-        signatory energy_provider, condominium
-
-        choice AddCPUsed : ListOfCPUsedID
-            with
-                cp_used : CPUsedID
-            controller energy_provider
-                do 
-                    create this with listOfCPUsed = cp_used :: listOfCPUsed
-
-        choice RemoveCPUsed : ListOfCPUsedID
-            with 
-                cp_used : CPUsedID
-            controller energy_provider
-                do 
-                    let newList = filter (/= cp_used) listOfCPUsed
-                    create this with listOfCPUsed = newList
+        signatory energy_provider, condominium, ev_user
+        key (energy_provider, condominium, ev_user) : (Party, Party, Party)
+        maintainer [key._1, key._2]
 
 
-template ListOfUsersWithDebt
-    with
-        listOfUsersWithDebt : [Party]
-        energy_provider : Party
-        condominium : Party
-    where
-        signatory energy_provider, condominium
+        nonconsuming choice RequestToCompletePayment : ContractId UserRequestCompletedPayment 
+            controller ev_user
+                do create UserRequestCompletedPayment with ev_user = ev_user, energy_provider = energy_provider, condominium = condominium
 
-
-        nonconsuming choice CheckIfUserHasDebt : Bool
-            with 
-                ev_user : Party
-            controller energy_provider
-                do 
-                    let check =  ev_user `elem` listOfUsersWithDebt
-                    return check
-                    
-
-        choice AddUserWithDebt : ListOfUsersWithDebtID
-            with
-                user : Party
-            controller energy_provider
-                do 
-                    create this with listOfUsersWithDebt = user :: listOfUsersWithDebt
-
-        choice RemoveUserWithDebt : ListOfUsersWithDebtID
-            with 
-                user : Party
-            controller energy_provider
-                do 
-                    let newList = filter (/= user) listOfUsersWithDebt
-                    create this with listOfUsersWithDebt = newList
-
-
+    
 
 template UserRequestCharging
     with    
         ev_user : Party
         energy_provider : Party
+        condominium : Party
     where
-        signatory ev_user, energy_provider
+        signatory ev_user, energy_provider, condominium
 
-        choice Approve : ListsAndCPUsed
+        choice Approve : CPUsedID
             with
                 cs_id : ChargingStationID
-                listOfCPFree : ListOfCPFreeID
-                listOfUsersWithDebt : ListOfUsersWithDebtID
-                listOfCPUsed : ListOfCPUsedID
             controller energy_provider
-                do exercise cs_id ApproveRequestCPFreeToCPUsed with ev_user = ev_user, listOfCPFree = listOfCPFree, listOfUsersWithDebt = listOfUsersWithDebt, listOfCPUsed = listOfCPUsed
+                do
+                    cp <- exercise cs_id GetACPFree 
+                    userHasDebt <- visibleByKey @UserWithDebt (energy_provider, condominium, ev_user)
+                    if (not userHasDebt) then
+                        do 
+                            exerciseByKey @CPFree (energy_provider, condominium, cp) Archive
+                            power <- exercise cs_id PowerForCP
+                            create CPUsed with energy_provider = energy_provider, condominium = condominium, power = power, ev_user = ev_user, cp_id = cp
+                    else do error "User has debts"
+                    -- validar que cp está no contrato de chargingStation
+                    -- cp está free? exerciseByKey @CPFree (energy_provider, condominium, cp) Archive
+                    -- create CPUsed
+                    -- exercise cs_id ApproveRequestCPFreeToCPUsed with ev_user = ev_user, listOfCPFree = listOfCPFree, listOfUsersWithDebt = listOfUsersWithDebt, listOfCPUsed = listOfCPUsed
 
 
 
@@ -194,30 +113,41 @@ template ChargingStation
         condominium : Party
         listOfParties : [Party]
         max_energy : Decimal
+        cpList : [Text]
     where
         ensure max_energy > 0.0
         signatory energy_provider, condominium
         observer listOfParties
+        key (energy_provider, condominium) : (Party, Party)
+        maintainer [key._1, key._2]
+
+        nonconsuming choice PowerForCP : Decimal
+            controller energy_provider
+                do 
+                    let total_cp = intToDecimal (length cpList)
+                    return (max_energy / total_cp)
 
 
-        nonconsuming choice CreateListOfCPUsed : ListOfCPUsedID
+        nonconsuming choice GetACPFree : Text
             controller energy_provider
                 do
-                    create ListOfCPUsed with listOfCPUsed = [], energy_provider = energy_provider, condominium = condominium
+                    isCpFreeList <- mapA (\x -> visibleByKey @CPFree (energy_provider, condominium, x)) cpList
+                    let index = elemIndex True isCpFreeList
+                    case index of 
+                        Some index  -> do 
+                                            let cp = cpList !! index
+                                            return cp
+                        _-> error "No CP available" 
 
-
-        nonconsuming choice CreateListOfCPFree : ListOfCPFreeID
+        nonconsuming choice IsCPValid : Bool
             with
-                listOfCPFree : [Text]
+                cp : Text
             controller energy_provider
                 do
-                    create ListOfCPFree with listOfCPFree = listOfCPFree, energy_provider = energy_provider, condominium = condominium 
-
-
-        nonconsuming choice CreateListOfUsersWithDebt : ListOfUsersWithDebtID
-            controller energy_provider
-                do
-                    create ListOfUsersWithDebt with listOfUsersWithDebt = [], energy_provider = energy_provider, condominium = condominium
+                    if cp `elem` cpList then
+                        return True
+                    else
+                        return False
 
 
         nonconsuming choice RequestCPFreeToCPUsed : ContractId UserRequestCharging
@@ -229,44 +159,31 @@ template ChargingStation
                         do 
                             error "User not allowed to charge here"
                     else
-                        create UserRequestCharging with ev_user = ev_user, energy_provider = energy_provider
+                        create UserRequestCharging with ev_user = ev_user, energy_provider = energy_provider, condominium = condominium
 
-
-        nonconsuming choice ApproveRequestCPFreeToCPUsed : ListsAndCPUsed
-            with
-                ev_user : Party
-                listOfCPFree : ListOfCPFreeID
-                listOfCPUsed : ListOfCPUsedID
-                listOfUsersWithDebt : ListOfUsersWithDebtID
-            controller energy_provider
-                do 
-                    hasDebt <- exercise listOfUsersWithDebt CheckIfUserHasDebt with ev_user = ev_user 
-                    if hasDebt then
-                        do
-                            error "User has debts"
-                        else do
-                            isEmpty <- exercise listOfCPFree IsEmpty
-                            if not isEmpty then
-                                do
-                                    first_cp_free <-  exercise listOfCPFree GetFirst
-                                    listOfCPFree_id <- exercise listOfCPFree Remove with cp_free = first_cp_free
-                                    cp_used_id <- create CPUsed with energy_provider = energy_provider, condominium = condominium, ev_user = ev_user, cp_id = first_cp_free --, isConnected = False
-                                    listOfCPUsed_id <- exercise listOfCPUsed AddCPUsed with cp_used = cp_used_id
-                                    return (ListsAndCPUsed with list_free = listOfCPFree_id, list_used = listOfCPUsed_id, cp_used = cp_used_id)
-                            else do error "No Charging Points available"
-
-
-        nonconsuming choice UpdateCPUsedToCPFree : CPLists
-            with
-                cp_used : CPUsedID
-                cp_id : Text
-                listOfCPFree_id : ListOfCPFreeID
-                listOfCPUsed_id : ListOfCPUsedID
+        choice AddNewCP : ChargingStationID
+            with 
+                new_cp : Text
             controller energy_provider
                 do
-                    listOfCPFree_id <- exercise listOfCPFree_id Add with cp_free = cp_id
-                    listOfCPUsed_id <- exercise listOfCPUsed_id RemoveCPUsed with cp_used = cp_used
-                    return (CPLists with list_free = listOfCPFree_id, list_used = listOfCPUsed_id)
+                    if new_cp `elem` cpList then
+                        do
+                            error "CP already exists"
+                    else
+                        do create this with cpList = new_cp :: cpList
+
+        choice RemoveCP : ChargingStationID
+            with 
+                cp_to_remove : Text
+            controller energy_provider
+                do
+                    if cp_to_remove `notElem` cpList then
+                        do
+                            error "CP doesn't exist"
+                    else
+                        do
+                            let newList = filter (/= cp_to_remove) cpList
+                            create this with cpList = newList
 
 
         choice UpdateListOfParties : ChargingStationID
@@ -292,90 +209,81 @@ template ChargingStation
                     let newList = filter (/= party_to_remove) listOfParties
                     create this with listOfParties = newList
 
-        -- choice UpdateMaxEnergy : ChargingStationID
-        --     with 
-        --         new_max_energy : Decimal
-        --     controller energy_provider, condominium 
-        --         do
-        --             create this with max_energy = new_max_energy
+        choice EnergyProviderRequestMaxEnergy : ContractId EnergyProviderRequestUpdateMaxEnergy
+            with 
+                new_max_energy : Decimal
+            controller energy_provider 
+                do
+                    create EnergyProviderRequestUpdateMaxEnergy with energy_provider = energy_provider, condominium = condominium, new_max_energy = new_max_energy
+
+        choice CondominiumRequestMaxEnergy : ContractId CondominiumRequestUpdateMaxEnergy
+            with 
+                new_max_energy : Decimal
+            controller energy_provider 
+                do
+                    create CondominiumRequestUpdateMaxEnergy with energy_provider = energy_provider, condominium = condominium, new_max_energy = new_max_energy
 
 
-data AllListsAndBill = AllListsAndBill
+template EnergyProviderRequestUpdateMaxEnergy 
     with 
-        list_free : ListOfCPFreeID
-        list_used : ListOfCPUsedID
-        list_users_with_debt : ListOfUsersWithDebtID
-        bill_id : BillID
+        energy_provider : Party
+        condominium : Party
+        new_max_energy : Decimal
+    where
+        signatory energy_provider, condominium
+
+        choice CondominiumApproves : ChargingStationID
+            with
+                cs : ChargingStation
+            controller condominium
+                do
+                    create cs with max_energy = new_max_energy
+
+template CondominiumRequestUpdateMaxEnergy
+    with
+        energy_provider : Party
+        condominium : Party
+        new_max_energy : Decimal
+    where 
+        signatory energy_provider, condominium
+
+        choice EnergyProviderApproves : ChargingStationID
+            with
+                cs : ChargingStation
+            controller energy_provider
+                do
+                    create cs with max_energy = new_max_energy 
 
 template RequestFinishCharge
     with
         ev_user : Party
         energy_provider : Party
-        cp_used : CPUsedID
+        condominium : Party
         cp_id : Text
     where
-        signatory ev_user, energy_provider
+        signatory ev_user, energy_provider, condominium
         
-        choice ApproveRequestFinishCharge : AllListsAndBill
+        choice ApproveRequestFinishCharge : UserWithDebtID
             with
-                energy_spend : Decimal
                 price : Decimal
-                listOfCPFree_id : ListOfCPFreeID
-                listOfCPUsed_id : ListOfCPUsedID
-                listOfUsersWithDebt_id : ListOfUsersWithDebtID
-                condominium : Party
                 cs_id : ChargingStationID
             controller energy_provider
                 do
-                    lists <- exercise cs_id UpdateCPUsedToCPFree with cp_used = cp_used, cp_id = cp_id, listOfCPFree_id = listOfCPFree_id, listOfCPUsed_id = listOfCPUsed_id
-                    listOfUsersWithDebt_id <- exercise listOfUsersWithDebt_id AddUserWithDebt with user = ev_user
-                    bill_id <- create Bill with energy_provider = energy_provider, condominium = condominium, ev_user = ev_user, energy_spend = energy_spend, price = price, isPaid = False, cp_id = cp_id
-                    archive cp_used
-                    return (AllListsAndBill with list_free = lists.list_free, list_used = lists.list_used, list_users_with_debt = listOfUsersWithDebt_id, bill_id = bill_id)
+                    exerciseByKey @CPUsed (energy_provider, condominium, ev_user) Archive
+                    create CPFree with energy_provider = energy_provider, condominium = condominium, cp = cp_id
+                    create UserWithDebt with energy_provider = energy_provider, condominium = condominium, ev_user = ev_user, price = price
 
 
 template UserRequestCompletedPayment
     with
-        bill_id : BillID
         energy_provider : Party
         ev_user : Party
         condominium : Party
     where
-        signatory energy_provider, ev_user
-        observer condominium
+        signatory energy_provider, ev_user, condominium
 
-        choice ApproveUserRequestCompletedPayment : ListOfUsersWithDebtID
-            with
-                listOfUsersWithDebt_id : ListOfUsersWithDebtID
+        choice ApproveUserRequestToCompletePayment : ()
             controller energy_provider
                 do
-                    exercise bill_id ChangeToTrue
-                    exercise listOfUsersWithDebt_id RemoveUserWithDebt with user = ev_user 
-                    
-
-template Bill
-    with 
-        energy_provider : Party
-        condominium : Party
-        energy_spend : Decimal
-        price : Decimal
-        ev_user : Party
-        cp_id : Text
-        isPaid : Bool
-    where
-        signatory energy_provider, ev_user
-        observer condominium
-
-        choice ChangeToTrue : ()
-            controller energy_provider
-                do
-                    bill_id <- create this with isPaid = True
-                    archive bill_id
-
-        nonconsuming choice RequestCompletedPayment : ContractId UserRequestCompletedPayment
-            controller ev_user
-                do
-                    create UserRequestCompletedPayment with bill_id = self, energy_provider = energy_provider, ev_user = ev_user, condominium = condominium
-                    
-
+                    exerciseByKey @UserWithDebt (energy_provider, condominium, ev_user) Archive
 
