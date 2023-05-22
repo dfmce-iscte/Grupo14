@@ -35,10 +35,14 @@ setup = script do
                 max_energy = 100.0
                 cpList = []
 
-
+    -- energy_provider faz uma oferta da instalação de uma charging station ao condominium
     offerCid <- submit energy_provider do 
         createCmd Offer with chargingStation
 
+    {- 
+    condominium aceita a oferta e fornece a lista de parties (moradores) que podem usar a 
+    charging station e a lista dos Charging Points (CP) que a charging station vai ter
+    -}
     csCid <- submit condominium do
         exerciseCmd offerCid Accept
             with 
@@ -57,7 +61,12 @@ setup = script do
     -- testes a adicionar/remover parties feitos
 
 
-    --User2 faz um request para carregar o carro
+
+
+    {-
+    User2 faz um request para carregar o carro
+    RequestCPFreeToCPUsed devolve o id do contrato UserRequestCharging criado
+    -}
     requestUser2 <- submit ev_user2 do
         exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = ev_user2
 
@@ -65,22 +74,31 @@ setup = script do
     requestUser1 <- submit ev_user1 do 
         exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = ev_user1
     
-    --request do User2 é aprovado
+    {-
+    Request do user2 é aprovado pelo energy_provider através da choice
+    Approve do template UserRequestCharging, que devolve o id do CPUsed atribuído
+    -}
     cpUser2 <- submit energy_provider do
         exerciseCmd requestUser2 Approve with cs_id = csCid
 
-    --request do User1 é aprovado
+    --request do User1 é aprovado pelo energy_provider
     cpUser1 <- submit energy_provider do
         exerciseCmd requestUser1 Approve with cs_id = csCid
 
-    -- user1 faz request para terminar o carregamento
+    {-
+    user1 faz request para terminar o carregamento através da choice 
+    RequestFinishing do template CPUsed, que devolve o id contrato 
+    RequestFinishCharge criado
+    -}
     requestfinishUser1 <- submit ev_user1 do
         exerciseCmd cpUser1 RequestFinishing 
 
-    -- request para terminar o carregamento do user1 é aprovado
+    {-
+    request para terminar do user1 é aprovado pelo energy_provider. 
+    É criado o registo de um UserWithDebt, que representa um user com divída
+    -}
     debtUser1 <- submit energy_provider do
-        exerciseCmd requestfinishUser1 ApproveRequestFinishCharge with price = 8.75, cs_id = csCid
-    --criada bill do User1
+        exerciseCmd requestfinishUser1 ApproveRequestFinishCharge with price_per_energy_unit = 1.75, total_energy = 15.00, cs_id = csCid
 
     -- user2 faz request para terminar o carregamento
     requestfinishUser2 <- submit ev_user2 do
@@ -88,14 +106,71 @@ setup = script do
 
     -- request para terminar o carregamento do user2 é aprovado
     debtUser2 <- submit energy_provider do
-        exerciseCmd requestfinishUser2 ApproveRequestFinishCharge with price = 10.0, cs_id = csCid
+        exerciseCmd requestfinishUser2 ApproveRequestFinishCharge with price_per_energy_unit = 1.75, total_energy = 20.00, cs_id = csCid
 
-    --user1 faz request para concluir o pagamento
+    {-
+    user1 faz request para concluir o pagamento da divída através da choice
+    RequestToCompletePayment do template UserWithDebt, que devolve o id do
+    contrato UserRequestCompletedPayment criado
+    -}
     requestPaymentUser1 <- submit ev_user1 do
         exerciseCmd debtUser1 RequestToCompletePayment
-    --energy_provider aprova o request do user1
+    
+    {-
+    energy_provider aprova o request do user1 e é arquivado o registo do user1
+    com divída
+    -}
     submit energy_provider do
         exerciseCmd requestPaymentUser1 ApproveUserRequestToCompletePayment
     
+    -- user1 faz novo pedido de carregamento e é aprovado sem problemas
+    requestUser1 <- submit ev_user1 do 
+        exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = ev_user1
+    cpUser1 <- submit energy_provider do
+        exerciseCmd requestUser1 Approve with cs_id = csCid
+
+
+    -- energy_provider faz um request ao condominium para atualizar a capacidade máxima de energia da estação
+    requestUpdateMaxEnergy <- submit energy_provider do
+        exerciseCmd csCid EnergyProviderRequestMaxEnergy with new_max_energy = 200.0
+    csCid <- submit condominium do
+        exerciseCmd requestUpdateMaxEnergy CondominiumApproves
+    
+
+    {-
+    Existem 7 formas de o script falhar (devolver um erro):
+        - Um utilizador que tente executar um choice e que não tenha permissões
+        - Um utilizador que tenha divídas tenta fazer um request para carregar o
+    carro
+        - Um utilizador válido tenta fazer um request para carregar o carro mas
+    não existem Charging Points livres
+        - Caso se tente adicionar um utilizador que já esteja na lista de parties
+        - Caso se tente remover um utilizador que não esteja na lista de parties
+        - Caso se tente adicionar um Charging Point que já esteja na lista de
+    Charging Points
+        - Caso se tente remover um Charging Point que não esteja na lista de
+    Charging Points 
+    -}
+
+
+    -- user que não está na listOfParties tenta fazer um request para carregar o carro
+    -- invalidRequest <- submit userNotInListOfParties do
+    --     exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = userNotInListOfParties
+
+    -- user com divída tenta fazer um request para carregar o carro
+    -- invalidRequestUser2 <- submit ev_user2 do
+    --     exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = ev_user2
+
+    -- requestDenied <- submit energy_provider do
+    --     exerciseCmd invalidRequestUser2 Approve with cs_id = csCid
+
+    -- adicionar user que já está na listOfParties
+    -- submit condominium do
+    --     exerciseCmd csCid AddNewParty with new_party = ev_user2
+    
+    -- remover user que não já está na listOfParties
+    -- submit condominium do
+    --     exerciseCmd csCid RemoveParty with party_to_remove = userNotInListOfParties
+
     return ()
     

@@ -92,18 +92,14 @@ template UserRequestCharging
                 cs_id : ChargingStationID
             controller energy_provider
                 do
-                    cp <- exercise cs_id GetACPFree 
                     userHasDebt <- visibleByKey @UserWithDebt (energy_provider, condominium, ev_user)
                     if (not userHasDebt) then
                         do 
+                            cp <- exercise cs_id GetACPFree 
                             exerciseByKey @CPFree (energy_provider, condominium, cp) Archive
                             power <- exercise cs_id PowerForCP
                             create CPUsed with energy_provider = energy_provider, condominium = condominium, power = power, ev_user = ev_user, cp_id = cp
                     else do error "User has debts"
-                    -- validar que cp está no contrato de chargingStation
-                    -- cp está free? exerciseByKey @CPFree (energy_provider, condominium, cp) Archive
-                    -- create CPUsed
-                    -- exercise cs_id ApproveRequestCPFreeToCPUsed with ev_user = ev_user, listOfCPFree = listOfCPFree, listOfUsersWithDebt = listOfUsersWithDebt, listOfCPUsed = listOfCPUsed
 
 
 
@@ -170,7 +166,7 @@ template ChargingStation
                         do
                             error "CP already exists"
                     else
-                        do create this with cpList = new_cp :: cpList
+                        create this with cpList = new_cp :: cpList
 
         choice RemoveCP : ChargingStationID
             with 
@@ -199,27 +195,37 @@ template ChargingStation
                 new_party : Party
             controller condominium
                 do
-                    create this with listOfParties = new_party :: listOfParties
+                    if new_party `elem` listOfParties then
+                        do
+                            error "Party already exists"
+                    else
+                        do
+                            create this with listOfParties = new_party :: listOfParties
 
         choice RemoveParty : ChargingStationID
             with 
                 party_to_remove : Party
             controller condominium
                 do
-                    let newList = filter (/= party_to_remove) listOfParties
-                    create this with listOfParties = newList
+                    if party_to_remove `notElem` listOfParties then
+                        do
+                            error "Party doesn't exist"
+                    else
+                        do
+                            let newList = filter (/= party_to_remove) listOfParties
+                            create this with listOfParties = newList
 
-        choice EnergyProviderRequestMaxEnergy : ContractId EnergyProviderRequestUpdateMaxEnergy
+        nonconsuming choice EnergyProviderRequestMaxEnergy : ContractId EnergyProviderRequestUpdateMaxEnergy
             with 
                 new_max_energy : Decimal
             controller energy_provider 
                 do
                     create EnergyProviderRequestUpdateMaxEnergy with energy_provider = energy_provider, condominium = condominium, new_max_energy = new_max_energy
 
-        choice CondominiumRequestMaxEnergy : ContractId CondominiumRequestUpdateMaxEnergy
+        nonconsuming choice CondominiumRequestMaxEnergy : ContractId CondominiumRequestUpdateMaxEnergy
             with 
                 new_max_energy : Decimal
-            controller energy_provider 
+            controller condominium 
                 do
                     create CondominiumRequestUpdateMaxEnergy with energy_provider = energy_provider, condominium = condominium, new_max_energy = new_max_energy
 
@@ -233,11 +239,11 @@ template EnergyProviderRequestUpdateMaxEnergy
         signatory energy_provider, condominium
 
         choice CondominiumApproves : ChargingStationID
-            with
-                cs : ChargingStation
             controller condominium
                 do
-                    create cs with max_energy = new_max_energy
+                    (fetchedContractId, fetchedContract) <- fetchByKey @ChargingStation (energy_provider, condominium)
+                    archive fetchedContractId
+                    create fetchedContract with max_energy = new_max_energy
 
 template CondominiumRequestUpdateMaxEnergy
     with
@@ -248,11 +254,11 @@ template CondominiumRequestUpdateMaxEnergy
         signatory energy_provider, condominium
 
         choice EnergyProviderApproves : ChargingStationID
-            with
-                cs : ChargingStation
             controller energy_provider
                 do
-                    create cs with max_energy = new_max_energy 
+                    (fetchedContractId, fetchedContract) <- fetchByKey @ChargingStation (energy_provider, condominium)
+                    archive fetchedContractId
+                    create fetchedContract with max_energy = new_max_energy
 
 template RequestFinishCharge
     with
@@ -265,13 +271,14 @@ template RequestFinishCharge
         
         choice ApproveRequestFinishCharge : UserWithDebtID
             with
-                price : Decimal
+                price_per_energy_unit : Decimal
+                total_energy : Decimal
                 cs_id : ChargingStationID
             controller energy_provider
                 do
                     exerciseByKey @CPUsed (energy_provider, condominium, ev_user) Archive
                     create CPFree with energy_provider = energy_provider, condominium = condominium, cp = cp_id
-                    create UserWithDebt with energy_provider = energy_provider, condominium = condominium, ev_user = ev_user, price = price
+                    create UserWithDebt with energy_provider = energy_provider, condominium = condominium, ev_user = ev_user, price = price_per_energy_unit * total_energy
 
 
 template UserRequestCompletedPayment
