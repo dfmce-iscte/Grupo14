@@ -166,7 +166,9 @@ template ChargingStation
                         do
                             error "CP already exists"
                     else
-                        create this with cpList = new_cp :: cpList
+                        do
+                            create CPFree with energy_provider = energy_provider, condominium = condominium, cp = new_cp
+                            create this with cpList = new_cp :: cpList
 
         choice RemoveCP : ChargingStationID
             with 
@@ -179,6 +181,7 @@ template ChargingStation
                     else
                         do
                             let newList = filter (/= cp_to_remove) cpList
+                            exerciseByKey @CPFree (energy_provider, condominium, cp_to_remove) Archive
                             create this with cpList = newList
 
 

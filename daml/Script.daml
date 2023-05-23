@@ -84,7 +84,7 @@ setup = script do
     --request do User1 é aprovado pelo energy_provider
     cpUser1 <- submit energy_provider do
         exerciseCmd requestUser1 Approve with cs_id = csCid
-
+    
     {-
     user1 faz request para terminar o carregamento através da choice 
     RequestFinishing do template CPUsed, que devolve o id contrato 
@@ -107,6 +107,9 @@ setup = script do
     -- request para terminar o carregamento do user2 é aprovado
     debtUser2 <- submit energy_provider do
         exerciseCmd requestfinishUser2 ApproveRequestFinishCharge with price_per_energy_unit = 1.75, total_energy = 20.00, cs_id = csCid
+
+
+
 
     {-
     user1 faz request para concluir o pagamento da divída através da choice
@@ -160,7 +163,6 @@ setup = script do
     -- user com divída tenta fazer um request para carregar o carro
     -- invalidRequestUser2 <- submit ev_user2 do
     --     exerciseCmd csCid RequestCPFreeToCPUsed with ev_user = ev_user2
-
     -- requestDenied <- submit energy_provider do
     --     exerciseCmd invalidRequestUser2 Approve with cs_id = csCid
 
